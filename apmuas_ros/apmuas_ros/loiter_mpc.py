@@ -111,7 +111,7 @@ class PlaneOptControl(OptimalControlProblem):
         super().__init__(mpc_params,
                         casadi_model)
         self.obs_params: List[Obstacle] = obs_params
-        self.robot_radius: float = 3.0
+        self.robot_radius: float = 0.0
         self.set_obstacle_avoidance_constraints()
 
     def set_obstacle_avoidance_constraints(self) -> None: 
@@ -220,9 +220,81 @@ class PlaneOptControl(OptimalControlProblem):
 def main() -> None: 
     #create an object of the plane class. This is the plane that'll be worked on
     plane: Plane = Plane()
+
+    # defining the limits of the states and controls in a dictionary
+    # dictionary must be in the form of {'state_name': {'min': min_value, 'max': max_value}}
+    control_limits_dict: dict = {
+        'u_phi': {'min': -np.deg2rad(45), 'max': np.deg2rad(45)},
+        'u_theta': {'min': -np.deg2rad(30), 'max': np.deg2rad(30)},
+        'u_psi': {'min': -np.deg2rad(180), 'max': np.deg2rad(180)},
+        'v_cmd': {'min': 10.0, 'max': 20.0}
+    }
+    state_limits_dict: dict = {
+        'x': {'min': -np.inf, 'max': np.inf},
+        'y': {'min': -np.inf, 'max': np.inf},
+        'z': {'min': 0, 'max': 100},
+        'phi': {'min': -np.deg2rad(45), 'max': np.deg2rad(45)},
+        'theta': {'min': -np.deg2rad(15), 'max': np.deg2rad(15)},
+        'psi': {'min': -np.pi, 'max': np.pi},
+        'v': {'min': 10.0, 'max': 20.0}
+    }
+    # insert the limits into the model
+    plane.set_control_limits(control_limits_dict)
+    plane.set_state_limits(state_limits_dict)
+
+    # now we will set the MPC weights for the plane
+    # 0 means we don't care about the specific state variable 1 means we care about it
+    Q: np.diag = np.diag([1, 1, 1, 0, 0, 0, 0])
+    R: np.diag = np.diag([0, 0, 0, 1])
+
+
+
+    #TODO: Call math alt function here to feed into PID, [2] of the obstacle list
+    # now set your initial conditions for this case its the plane
+    x0: np.array = np.array([5, 5, 30, 0, 0, 0, 10])
+    xF: np.array = np.array([100, 100, 65, 0, 0, 0, 10])
+    u_0: np.array = np.array([0, 0, 0, 10])
+
+    # make a list of the obstacle that the path will encounter
+    #TODO: Call math radius function here
+    obstacle_list: List[Obstacle] = []
+    obstacle_list.append(Obstacle(center=[xF[0], xF[1], xF[2]], radius=5))
+
+    # we will now slot the MPC weights into the MPCParams class
+    mpc_params: MPCParams = MPCParams(Q=Q, R=R, N=15, dt=0.1)
+    # formulate your optimal control problem
+    plane_opt_control: PlaneOptControl = PlaneOptControl(
+        mpc_params=mpc_params, casadi_model=plane, obs_params=obstacle_list)
     
 
 
+    def custom_stop_criteria(state: np.ndarray,
+                             final_state: np.ndarray) -> bool:
+        distance = np.linalg.norm(state[0:2] - final_state[0:2])
+        if distance < 0.01:
+            return True
+
+    # we can now begin our simulation
+    closed_loop_sim: CloseLoopSim = CloseLoopSim(
+        optimizer=plane_opt_control, x_init=x0, x_final=xF, u0=u_0,
+        N=300, log_data=True, stop_criteria=custom_stop_criteria)
+
+    # we can now run the simulation
+    closed_loop_sim.run()
+    report: Report = closed_loop_sim.report
+
+    states: Dict = report.current_state
+    controls: Dict = report.current_control
+
+    # we will now plot the trajectory
+    # plot a 3D trajectory
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    ax.plot(states['x'], states['y'], states['z'])
+    ax.scatter(xF[0], xF[1], xF[2], c='r', label='Goal')
+
+    ax.legend()
+    plt.show()
 
 
 if __name__ == '__main__':

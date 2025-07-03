@@ -45,3 +45,22 @@ class DroneMath():
             return min_alt_m
         else:
             return calc_alt
+
+
+
+    def realtime_loiter_radius(mount_angle_phi_deg:float, 
+                                cam_range_m:float,
+                                roll_limit_deg:float) -> float:
+        neg_roll_deg = ((-1) * roll_limit_deg)
+        if mount_angle_phi_deg < neg_roll_deg:
+            mount_angle_phi_deg = neg_roll_deg
+        elif mount_angle_phi_deg > roll_limit_deg:
+            mount_angle_phi_deg = roll_limit_deg
+        
+        return (math.sin(math.radians(mount_angle_phi_deg)) * cam_range_m)
+    
+    def calculate_loiter_time(num_loiters:int, loiter_radius: float, aircraft_velocity_mps: float) -> float: 
+        loiter_circumference: float = (2) * (np.pi) * (loiter_radius)
+        total_distance: float = loiter_circumference * num_loiters
+        loiter_time = (total_distance) / aircraft_velocity_mps
+        return loiter_time

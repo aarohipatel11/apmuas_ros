@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 
-#The one that actually has changes on the todos
+#guidance_publisher or waypoint_manager with only TODOs 
 import rclpy
 import math
 import numpy as np
@@ -12,14 +12,11 @@ from rclpy.publisher import Publisher
 from rclpy.subscription import Subscription
 from nav_msgs.msg import Odometry
 from drone_interfaces.msg import Telem, CtlTraj
-#from apmuas_ros import CtlTraj
 from apmuas_ros import rotation_utils as rot_utils
 from re import S
 from typing import List, Dict
 from mavros.base import SENSOR_QOS
 from apmuas_ros.PID import PID, FirstOrderFilter
-from apmuas_ros.drone_math import DroneMath
-import time
 """
 For this application we will be sending roll, pitch yaw commands to the drone
 """
@@ -88,22 +85,18 @@ class GuidancePublisher(Node):
             qos_profile=SENSOR_QOS)
 
 
-        #TODO: remove this block -> Done
+        #TODO: remove this block
         # subscribe to your target position
-        # self.target_sub: Subscription = self.create_subscription(
-        #     Odometry,
-        #     'target_position',
-        #     self.calculate_line_of_sight,
-        #     10)
+        self.target_sub: Subscription = self.create_subscription(
+            Odometry,
+            'target_position',
+            self.calculate_line_of_sight,
+            10)
         
 
-        #TODO: Make a list of a list of floats -> Done 
-        self.target_waypoints: List[List[float]] = [
-            [50, 50, 80],
-            [100, 100, 70]
-        ]
+        #TODO: Make a list of a list of floats 
 
-        self.current_target_index: int = 0
+        self.target_waypoints: List[List[float]] = []
 
 
         # smoothing for controller
@@ -126,6 +119,8 @@ class GuidancePublisher(Node):
             use_derivative=True,
             dt = 0.025)
         
+        self.current_target_index: int = 0
+
         
         self.current_state: List[float] = [
             None,  # x
@@ -134,13 +129,8 @@ class GuidancePublisher(Node):
             None,  # phi
             None,  # theta
             None,  # psi
-            None   # airspeed
+            None,  # airspeed
         ]
-
-        self.trajectory_command_history :List[Dict[str, float]] = [
-
-        ]
-
 
     def mavros_state_callback(self, msg: mavros.local_position.Odometry) -> None:
         """
@@ -177,18 +167,18 @@ class GuidancePublisher(Node):
             return
         
 
-        #TODO: Index into target_waypoints properly with target_index parameter -> Done
+        #TODO: Index into target_waypoints properly with target_index parameter 
         # stores target position in ENU in target class list
-        # self.target_waypoints[target_index][0] = target_msg.pose.pose.position.x
-        # self.target_waypoints[target_index][1] = target_msg.pose.pose.position.y
-        # self.target_waypoints[target_index][2] = target_msg.pose.pose.position.z
+        self.target[0] = target_msg.pose.pose.position.x
+        self.target[1] = target_msg.pose.pose.position.y
+        self.target[2] = target_msg.pose.pose.position.z
         
         # calculate distance from current position to target position 
         # dx, dy = lateral distance
         # dz = vertical distance
-        dx:float = self.target_waypoints[target_index][0] - self.current_state[0]
-        dy:float = self.target_waypoints[target_index][1] - self.current_state[1]
-        dz:float = self.target_waypoints[target_index][2] - self.current_state[2]
+        dx:float = self.target[0] - self.current_state[0]
+        dy:float = self.target[1] - self.current_state[1]
+        dz:float = self.target[2] - self.current_state[2]
         # dz is already computed in the model so set setpoint as dz
         # and the current value as 0.0
         dz = self.dz_filter.filter(dz)
@@ -220,14 +210,12 @@ class GuidancePublisher(Node):
             self.roll_controller.prev_error = 0.0
             
 
-        #TODO: Keep it safe and say 35-45 -> Done at 40
+        #TODO: Keep it safe and say 35-45
         roll_cmd = self.roll_controller.compute(
             setpoint=rel_yaw_cmd,
             current_value=0.0,
             dt=0.05
         )
-        
-
         # make sure the roll command has the same sign convention as 
         # the yaw command
         if rel_yaw_cmd < 0.0 and roll_cmd > 0.0:
@@ -246,56 +234,19 @@ class GuidancePublisher(Node):
         trajectory.thrust = [thrust_cmd, thrust_cmd]
         trajectory.idx = int(0)
 
-        #TODO: return something to record all these commands -> Done
+        #TODO: return something to record all these commands
+        
         self.trajectory_publisher.publish(trajectory)
 
-        trajectory_dict: Dict[str, float] = {
-            'roll': roll_cmd,
-            'pitch': pitch_cmd,
-            'yaw': rel_yaw_cmd,
-            'thrust': thrust_cmd
-        }
+        #TODO: method for publishing_trajectory
 
-        self.trajectory_command_history.append(trajectory_dict)
-        return trajectory
-
-    #TODO: define this function by calculating current to target location -> Done
-    def is_close(self, radius_to_close: float, ideal_alt:float, target_idx:int) -> bool:
-        #have two checks here, one to make sure that the altitude is acceptable enough for the camera range 
-        # The other this to make sure that the loiter radius is met 
-        radius_xy_good: bool = False
-        altitude_z_good: bool = False
-        #TODO: Checks here
-        a:float = (self.self.target_waypoints[target_idx][0] - self.current_state[0])**2
-        b: float = (self.self.target_waypoints[target_idx][1] - self.current_state[1])**2
-        distance_from_target: float =  math.sqrt(a + b)
-        if distance_from_target <= radius_to_close:
-            radius_xy_good = True
-        if abs(self.target_waypoints[target_idx][2] - self.current_state[2]) <= 5: 
-            altitude_z_good = True
-
-        if radius_xy_good and altitude_z_good: 
-            return True
-        return False
-
+    def publish_trajectory(self, commands: Dict[str, float]) -> None: 
+        pass
+        
 def main() -> None:
     rclpy.init()
     guidance_publisher:GuidancePublisher = GuidancePublisher()
-    aircraft_max_roll_deg: float = 40.0
-    alt_max_limit:float = 100.0 
-    alt_min_limit:float = 40.0
-    camera_range_m: float = 100.0
-    number_of_loiters: int = 2
-    ideal_aircraft_alt_m = DroneMath.compute_altitude_m(cam_range_m_alt = camera_range_m,
-                                max_roll_tan = aircraft_max_roll_deg,
-                                max_alt_m = alt_max_limit,
-                                min_alt_m = alt_min_limit)
-    ideal_loiter_radius = DroneMath.realtime_loiter_radius(mount_angle_phi_deg=aircraft_max_roll_deg,
-                                                           cam_range_m=camera_range_m,
-                                                           roll_limit_deg=aircraft_max_roll_deg)
-    num_targets = len(guidance_publisher.target_waypoints)
-    
-    #TODO: Call drone_math to calc ideal radius and alt -> Done
+    #TODO: Call drone_math to calc ideal radius and alt
     while rclpy.ok():
         try:
             if guidance_publisher.current_state[0] is None:
@@ -303,7 +254,6 @@ def main() -> None:
                 continue
 
             #TODO: if guidance_publisher.is_close_enough()
-            #TODO: find a place to increment target_index -> Done
             '''
             send the roll and alt from calculated values above
             straight to flight controller
@@ -315,24 +265,6 @@ def main() -> None:
             else: 
                 calculate_line_of_sight()
             '''
-            if guidance_publisher.is_close(radius_to_close=ideal_loiter_radius, ideal_alt=ideal_aircraft_alt_m):
-                current_trajectory = guidance_publisher.calculate_line_of_sight(target_index=guidance_publisher.current_target_index)
-                current_trajectory.roll = [aircraft_max_roll_deg, aircraft_max_roll_deg]
-                guidance_publisher.trajectory_publisher.publish(current_trajectory)  
-                aircraft_speed = guidance_publisher.current_state[6]              
-                loiter_time_sec = DroneMath.calculate_loiter_time(num_loiters=number_of_loiters, 
-                                                                  loiter_radius=ideal_loiter_radius,
-                                                                  aircraft_velocity_mps=aircraft_speed)
-                time.sleep(loiter_time_sec)
-
-                #TODO: check if the list is done with all the stops, if so, break if not then increment target list idx -> Done
-                if guidance_publisher.current_target_index == (num_targets - 1):
-                    break
-                else: 
-                    guidance_publisher.current_target_index = (guidance_publisher.current_target_index + 1)
-            else:
-                guidance_publisher.calculate_line_of_sight(target_index=guidance_publisher.current_target_index)
-            
         
             rclpy.spin_once(guidance_publisher, timeout_sec=0.05)
         

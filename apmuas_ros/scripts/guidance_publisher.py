@@ -99,7 +99,7 @@ class GuidancePublisher(Node):
 
         #TODO: Make a list of a list of floats -> Done 
         self.target_waypoints: List[List[float]] = [
-            [50, 50, 80],
+            [-100, -100, 60],
             [100, 100, 70]
         ]
 
@@ -204,7 +204,6 @@ class GuidancePublisher(Node):
         pitch_cmd = np.clip(pitch_cmd, -np.deg2rad(12), np.deg2rad(10))
         
         dist: float = np.sqrt(dx**2 + dy**2)
-        print("dist", dist)
         
         enu_yaw_rad:float = np.arctan2(dy, dx)
         #ned_yaw_cmd_rad:float = yaw_enu_to_ned(enu_yaw_rad)
@@ -239,7 +238,7 @@ class GuidancePublisher(Node):
         thrust_cmd:float = float(0.5)      
         # create a trajectory message
         trajectory: CtlTraj = CtlTraj()
-        trajectory.header.stamp = self.get_clock().now().to_msg()
+        # trajectory.header.stamp = self.get_clock().now().to_msg()
         trajectory.roll = [roll_cmd, roll_cmd]
         trajectory.pitch = [pitch_cmd, pitch_cmd]
         trajectory.yaw = [rel_yaw_cmd, rel_yaw_cmd]
@@ -260,14 +259,14 @@ class GuidancePublisher(Node):
         return trajectory
 
     #TODO: define this function by calculating current to target location -> Done
-    def is_close(self, radius_to_close: float, ideal_alt:float, target_idx:int) -> bool:
+    def is_close(self, radius_to_close: float, target_idx:int) -> bool:
         #have two checks here, one to make sure that the altitude is acceptable enough for the camera range 
         # The other this to make sure that the loiter radius is met 
         radius_xy_good: bool = False
         altitude_z_good: bool = False
         #TODO: Checks here
-        a:float = (self.self.target_waypoints[target_idx][0] - self.current_state[0])**2
-        b: float = (self.self.target_waypoints[target_idx][1] - self.current_state[1])**2
+        a:float = (self.target_waypoints[target_idx][0] - self.current_state[0])**2
+        b: float = (self.target_waypoints[target_idx][1] - self.current_state[1])**2
         distance_from_target: float =  math.sqrt(a + b)
         if distance_from_target <= radius_to_close:
             radius_xy_good = True
@@ -315,24 +314,34 @@ def main() -> None:
             else: 
                 calculate_line_of_sight()
             '''
-            if guidance_publisher.is_close(radius_to_close=ideal_loiter_radius, ideal_alt=ideal_aircraft_alt_m):
-                current_trajectory = guidance_publisher.calculate_line_of_sight(target_index=guidance_publisher.current_target_index)
-                current_trajectory.roll = [aircraft_max_roll_deg, aircraft_max_roll_deg]
-                guidance_publisher.trajectory_publisher.publish(current_trajectory)  
-                aircraft_speed = guidance_publisher.current_state[6]              
+            if guidance_publisher.is_close(radius_to_close=ideal_loiter_radius, target_idx=guidance_publisher.current_target_index):
+                aircraft_speed = guidance_publisher.current_state[6] 
                 loiter_time_sec = DroneMath.calculate_loiter_time(num_loiters=number_of_loiters, 
                                                                   loiter_radius=ideal_loiter_radius,
                                                                   aircraft_velocity_mps=aircraft_speed)
-                time.sleep(loiter_time_sec)
+                loiter_time_sec = 15
+                delta_time = 0
+                current_time = time.time()
 
-                #TODO: check if the list is done with all the stops, if so, break if not then increment target list idx -> Done
-                if guidance_publisher.current_target_index == (num_targets - 1):
-                    break
-                else: 
+                while delta_time < loiter_time_sec:
+                    delta_time = time.time() - current_time                    
+                    current_trajectory = guidance_publisher.calculate_line_of_sight(target_index=guidance_publisher.current_target_index)
+                    # current_trajectory.roll = [aircraft_max_roll_deg, aircraft_max_roll_deg]
+                    # guidance_publisher.trajectory_publisher.publish(current_trajectory)  
+                    print(delta_time, loiter_time_sec)
+                    rclpy.spin_once(guidance_publisher, timeout_sec=0.05)
+                if guidance_publisher.current_target_index >= len(guidance_publisher.target_waypoints) - 1:
+                    print("I'm done, resetting to 0", guidance_publisher.current_target_index)
+                    guidance_publisher.current_target_index = 0
+                else:
+                    print("incrementing counter", guidance_publisher.current_target_index)
+            
                     guidance_publisher.current_target_index = (guidance_publisher.current_target_index + 1)
+                
             else:
                 guidance_publisher.calculate_line_of_sight(target_index=guidance_publisher.current_target_index)
-            
+                # print("going to line of sight")
+    
         
             rclpy.spin_once(guidance_publisher, timeout_sec=0.05)
         

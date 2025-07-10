@@ -99,8 +99,8 @@ class GuidancePublisher(Node):
 
         #TODO: Make a list of a list of floats -> Done 
         self.target_waypoints: List[List[float]] = [
-            [-100, -100, 60],
-            [100, 100, 70]
+            [-100, 100, 60],
+            [-100, -100, 70]
         ]
 
         self.current_target_index: int = 0
@@ -110,7 +110,7 @@ class GuidancePublisher(Node):
         self.dz_filter : FirstOrderFilter = FirstOrderFilter(
             tau=0.5, dt=0.025, x0=0.0)
         self.yaw_filter : FirstOrderFilter = FirstOrderFilter(
-            tau=0.4, dt=0.025, x0=0.0)
+            tau=0.3, dt=0.025, x0=0.0)
         
         self.dz_controller: PID = PID(
             kp=0.025, ki=0.0, kd=0.01,
@@ -120,7 +120,7 @@ class GuidancePublisher(Node):
             dt = 0.025)
         
         self.roll_controller: PID = PID(
-            kp=0.25, ki=0.0, kd=0.05,
+            kp=0.5, ki=0.0, kd=0.05,
             min_constraint=np.deg2rad(-40),
             max_constraint=np.deg2rad(40),
             use_derivative=True,
@@ -186,6 +186,8 @@ class GuidancePublisher(Node):
         # calculate distance from current position to target position 
         # dx, dy = lateral distance
         # dz = vertical distance
+        # offset_x: float = np.sin(self.current_state[5]) * loiter_radius
+        # offset_y: float = np.cos(self.current_state[5]) * loiter_radius
         dx:float = self.target_waypoints[target_index][0] - self.current_state[0]
         dy:float = self.target_waypoints[target_index][1] - self.current_state[1]
         dz:float = self.target_waypoints[target_index][2] - self.current_state[2]
@@ -204,6 +206,7 @@ class GuidancePublisher(Node):
         pitch_cmd = np.clip(pitch_cmd, -np.deg2rad(12), np.deg2rad(10))
         
         dist: float = np.sqrt(dx**2 + dy**2)
+        print("Dist: ", dist)
         
         enu_yaw_rad:float = np.arctan2(dy, dx)
         #ned_yaw_cmd_rad:float = yaw_enu_to_ned(enu_yaw_rad)
@@ -259,21 +262,24 @@ class GuidancePublisher(Node):
         return trajectory
 
     #TODO: define this function by calculating current to target location -> Done
-    def is_close(self, radius_to_close: float, target_idx:int) -> bool:
+    #TODO: factor in the buffer here
+    def is_close(self, radius_to_close: float, target_idx:int, loiter_radius:float) -> bool:
         #have two checks here, one to make sure that the altitude is acceptable enough for the camera range 
         # The other this to make sure that the loiter radius is met 
         radius_xy_good: bool = False
         altitude_z_good: bool = False
         #TODO: Checks here
-        a:float = (self.target_waypoints[target_idx][0] - self.current_state[0])**2
-        b: float = (self.target_waypoints[target_idx][1] - self.current_state[1])**2
-        distance_from_target: float =  math.sqrt(a + b)
+        # offset_x: float = np.sin(self.current_state[5]) * loiter_radius
+        # offset_y: float = np.cos(self.current_state[5]) * loiter_radius
+        x:float = ((self.target_waypoints[target_idx][0] - self.current_state[0]) + 0) **2
+        y: float = ((self.target_waypoints[target_idx][1] - self.current_state[1]) + 0)**2
+        distance_from_target: float =  math.sqrt(x + y)
         if distance_from_target <= radius_to_close:
             radius_xy_good = True
         if abs(self.target_waypoints[target_idx][2] - self.current_state[2]) <= 5: 
             altitude_z_good = True
 
-        if radius_xy_good and altitude_z_good: 
+        if radius_xy_good and altitude_z_good:
             return True
         return False
 
@@ -284,16 +290,20 @@ def main() -> None:
     alt_max_limit:float = 100.0 
     alt_min_limit:float = 40.0
     camera_range_m: float = 100.0
-    number_of_loiters: int = 2
+    number_of_loiters: int = 1
     ideal_aircraft_alt_m = DroneMath.compute_altitude_m(cam_range_m_alt = camera_range_m,
                                 max_roll_tan = aircraft_max_roll_deg,
                                 max_alt_m = alt_max_limit,
                                 min_alt_m = alt_min_limit)
+    
+    #TODO: pass tghrough the ideal altitude
+    for target in guidance_publisher.target_waypoints:
+        target[2] = ideal_aircraft_alt_m
+
     ideal_loiter_radius = DroneMath.realtime_loiter_radius(mount_angle_phi_deg=aircraft_max_roll_deg,
                                                            cam_range_m=camera_range_m,
                                                            roll_limit_deg=aircraft_max_roll_deg)
-    num_targets = len(guidance_publisher.target_waypoints)
-    
+    bubble_radius: float = 15.0
     #TODO: Call drone_math to calc ideal radius and alt -> Done
     while rclpy.ok():
         try:
@@ -314,18 +324,20 @@ def main() -> None:
             else: 
                 calculate_line_of_sight()
             '''
-            if guidance_publisher.is_close(radius_to_close=ideal_loiter_radius, target_idx=guidance_publisher.current_target_index):
+            if guidance_publisher.is_close(
+                radius_to_close=bubble_radius, target_idx=guidance_publisher.current_target_index, loiter_radius=ideal_loiter_radius):
                 aircraft_speed = guidance_publisher.current_state[6] 
                 loiter_time_sec = DroneMath.calculate_loiter_time(num_loiters=number_of_loiters, 
                                                                   loiter_radius=ideal_loiter_radius,
                                                                   aircraft_velocity_mps=aircraft_speed)
-                loiter_time_sec = 15
+                # loiter_time_sec = 30
                 delta_time = 0
                 current_time = time.time()
 
                 while delta_time < loiter_time_sec:
                     delta_time = time.time() - current_time                    
-                    current_trajectory = guidance_publisher.calculate_line_of_sight(target_index=guidance_publisher.current_target_index)
+                    current_trajectory = guidance_publisher.calculate_line_of_sight(
+                        target_index=guidance_publisher.current_target_index)
                     # current_trajectory.roll = [aircraft_max_roll_deg, aircraft_max_roll_deg]
                     # guidance_publisher.trajectory_publisher.publish(current_trajectory)  
                     print(delta_time, loiter_time_sec)
@@ -339,7 +351,8 @@ def main() -> None:
                     guidance_publisher.current_target_index = (guidance_publisher.current_target_index + 1)
                 
             else:
-                guidance_publisher.calculate_line_of_sight(target_index=guidance_publisher.current_target_index)
+                guidance_publisher.calculate_line_of_sight(
+                    target_index=guidance_publisher.current_target_index)
                 # print("going to line of sight")
     
         

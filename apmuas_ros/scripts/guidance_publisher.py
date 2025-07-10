@@ -99,8 +99,8 @@ class GuidancePublisher(Node):
 
         #TODO: Make a list of a list of floats -> Done 
         self.target_waypoints: List[List[float]] = [
-            [-100, 100, 60],
-            [-100, -100, 70]
+            [-100, 0, 60],
+            [-100, -200, 70]
         ]
 
         self.current_target_index: int = 0
@@ -290,7 +290,7 @@ def main() -> None:
     alt_max_limit:float = 100.0 
     alt_min_limit:float = 40.0
     camera_range_m: float = 100.0
-    number_of_loiters: int = 1
+    number_of_loiters: int = 2
     ideal_aircraft_alt_m = DroneMath.compute_altitude_m(cam_range_m_alt = camera_range_m,
                                 max_roll_tan = aircraft_max_roll_deg,
                                 max_alt_m = alt_max_limit,

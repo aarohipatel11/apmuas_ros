@@ -303,7 +303,7 @@ def main() -> None:
     ideal_loiter_radius = DroneMath.realtime_loiter_radius(mount_angle_phi_deg=aircraft_max_roll_deg,
                                                            cam_range_m=camera_range_m,
                                                            roll_limit_deg=aircraft_max_roll_deg)
-    bubble_radius: float = 15.0
+    bubble_radius: float = 3.0
 
     print("Alt: ", ideal_aircraft_alt_m)
     print("Radius: ", ideal_loiter_radius)

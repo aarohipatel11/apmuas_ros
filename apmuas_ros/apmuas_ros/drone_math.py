@@ -2,6 +2,10 @@ import math
 import numpy as np
 from scipy.constants import g
 
+# Earth radius in meters
+EARTH_RADIUS = 6371000  
+
+
 class DroneMath():
     def __init__(self):
         pass       
@@ -65,3 +69,31 @@ class DroneMath():
         total_distance: float = loiter_circumference * num_loiters
         loiter_time = (total_distance) / aircraft_velocity_mps
         return loiter_time
+    
+
+
+    def haversine_distance(lat1, lon1, lat2, lon2):
+        dlat = np.deg2rad(lat2 - lat1)
+        dlon = np.deg2rad(lon2 - lon1)
+        lat1 = np.deg2rad(lat1)
+        lat2 = np.deg2rad(lat2)
+
+        a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        return EARTH_RADIUS * c
+
+    def initial_bearing(lat1, lon1, lat2, lon2):
+        lat1 = np.deg2rad(lat1)
+        lat2 = np.deg2rad(lat2)
+        dlon = np.deg2rad(lon2 - lon1)
+
+        x = math.sin(dlon) * math.cos(lat2)
+        y = math.cos(lat1)*math.sin(lat2) - math.sin(lat1)*math.cos(lat2)*math.cos(dlon)
+        return math.atan2(x, y)
+
+    def geodetic_to_local(origin_lat, origin_lon, target_lat, target_lon):
+        distance = DroneMath.haversine_distance(origin_lat, origin_lon, target_lat, target_lon)
+        bearing = DroneMath.initial_bearing(origin_lat, origin_lon, target_lat, target_lon)
+        x = distance * math.sin(bearing)
+        y = distance * math.cos(bearing)
+        return x, y

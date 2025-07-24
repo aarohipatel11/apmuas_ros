@@ -15,10 +15,11 @@ from drone_interfaces.msg import Telem, CtlTraj
 #from apmuas_ros import CtlTraj
 from apmuas_ros import rotation_utils as rot_utils
 from re import S
-from typing import List, Dict
+from typing import List, Dict, Any
 from mavros.base import SENSOR_QOS
 from apmuas_ros.PID import PID, FirstOrderFilter
-from apmuas_ros.drone_math import DroneMath
+from apmuas_ros.drone_math import DroneMath, geodetic_to_cartesian, convert_all_to_cartesian
+from apmuas_ros.drone import DroneCommander
 import time
 """
 For this application we will be sending roll, pitch yaw commands to the drone
@@ -86,22 +87,22 @@ class GuidancePublisher(Node):
             'mavros/local_position/odom',
             self.mavros_state_callback,
             qos_profile=SENSOR_QOS)
-
-
-        #TODO: remove this block -> Done
-        # subscribe to your target position
-        # self.target_sub: Subscription = self.create_subscription(
-        #     Odometry,
-        #     'target_position',
-        #     self.calculate_line_of_sight,
-        #     10)
         
+        self.drone_commander: DroneCommander = DroneCommander(
+            master_link= 'udpin:127.0.0.1:14553'
+        )
 
-        #TODO: Make a list of a list of floats -> Done 
+        self.home_lat: float = -35.3632622
+        self.home_lon: float = 149.1652374
+        
+        self.mission_items: List[Dict[str, Any]] = self.drone_commander.read_mission_items()
+
         self.target_waypoints: List[List[float]] = [
             [-145, 2, 60],
-            [-150, -227, 70]
-        ]
+            [150, 227, 70]
+        ] 
+        #TODO: Need to automate waypoints/check if its empty
+        self.target_waypoints: List[List[float]] = self.convert_waypoints_to_cartesian()
 
         self.current_target_index: int = 0
 
@@ -141,6 +142,47 @@ class GuidancePublisher(Node):
 
         ]
 
+    def convert_waypoints_to_cartesian(self) -> List[List[float]]:
+        """
+        Converts geodetic coordinates (latitude, longitude) of waypoints to Cartesian coordinates.
+
+        Args:
+            None
+
+        Returns:
+            List[List[float]]: A list of Cartesian coordinates (x, y) for each waypoints, excluding the home location.
+        
+        """
+
+        print(self.mission_items)
+        print(self.home_lat, self.home_lon)
+
+        origin_lat: float = self.home_lat
+        origin_lon: float = self.home_lon
+        
+        #Empty list to hold the coordinates
+        coord_list = []
+        coord_list.append([origin_lat, origin_lon, 0.0])  # Add origin point
+
+        # Loop through the mission items and extract the x and y coordinates
+        for i, item in enumerate(self.mission_items):
+            if i == 0:
+                continue
+            if 'x' in item and 'y' in item:
+                coord_list.append([item['x'], item['y'], item['z']])
+            else:
+                print("Missing x or y in item:", item)
+
+        print(coord_list)
+
+        cartesian_coords = convert_all_to_cartesian(coord_list)
+
+        print("Cartesian Coordinates:")
+        for xy in cartesian_coords:
+            print(f"X: {xy[0]:.2f}, Y: {xy[1]:.2f}")
+        
+        # Returns past 1 because the first coordinate is the home location
+        return cartesian_coords[1:]
 
     def mavros_state_callback(self, msg: mavros.local_position.Odometry) -> None:
         """
@@ -303,7 +345,7 @@ def main() -> None:
     ideal_loiter_radius = DroneMath.realtime_loiter_radius(mount_angle_phi_deg=aircraft_max_roll_deg,
                                                            cam_range_m=camera_range_m,
                                                            roll_limit_deg=aircraft_max_roll_deg)
-    bubble_radius: float = 15.0
+    # bubble_radius: float = 15.0
 
     print("Alt: ", ideal_aircraft_alt_m)
     print("Radius: ", ideal_loiter_radius)
@@ -333,7 +375,7 @@ def main() -> None:
                 loiter_time_sec = DroneMath.calculate_loiter_time(num_loiters=number_of_loiters, 
                                                                   loiter_radius=ideal_loiter_radius,
                                                                   aircraft_velocity_mps=aircraft_speed)
-                # loiter_time_sec = 30
+                loiter_time_sec = 10
                 delta_time = 0
                 current_time = time.time()
 

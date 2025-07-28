@@ -104,7 +104,7 @@ class GuidancePublisher(Node):
             [-145, 2, 60],
             [150, 227, 70]
         ] 
-
+        #TODO: Need to automate waypoints/check if its empty
         # TODO need to keep listening in case we have changed waypoints
         self.cartesian_waypoints: List[List[float]] = self.convert_waypoints_to_cartesian()
 
@@ -147,25 +147,22 @@ class GuidancePublisher(Node):
         ]
     def does_mission_items_exist(self) -> None:
         """
-        Checks if mission items exist.
+        have a method to check if the mission items are empty
+        if its empty, keep listening for mission items
+        then exit out of the class
 
-        Args:
-            None
+        Check if mission items exist.
         
         Returns:
-            None
-                
-        In this method we have to check if its less than 1 because mission planner caches the first waypoint i.e.:
-        [
-            [home_lat, home_lon, 0.0] is always in this list no matter what
-        ]
+            bool: True if mission items exist, False otherwise.
         
-        It is less than or equal to 1 because the first item is a repeat/ghost waypoint that Mission Planner adds
-        Starting from 1 accounts for this repeat
         """
 
-        while len(self.mission_items) <= 1: 
+        while self.mission_items is None or not self.mission_items:
             self.mission_items: List[Dict[str, Any]] = self.drone_commander.read_mission_items()
+
+        
+        
     
     def convert_waypoints_to_cartesian(self) -> List[List[float]]:
         """
@@ -371,7 +368,7 @@ def main() -> None:
     ideal_loiter_radius = DroneMath.realtime_loiter_radius(mount_angle_phi_deg=aircraft_max_roll_deg,
                                                            cam_range_m=camera_range_m,
                                                            roll_limit_deg=aircraft_max_roll_deg)
-    bubble_radius: float = 15.0
+    # bubble_radius: float = 15.0
 
     print("Alt: ", ideal_aircraft_alt_m)
     print("Radius: ", ideal_loiter_radius)

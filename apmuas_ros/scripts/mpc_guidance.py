@@ -20,9 +20,11 @@ from ros_mpc.rotation_utils import (ned_to_enu_states,
 from ros_mpc.PlaneOptControl import PlaneOptControl
 from optitraj.utils.data_container import MPCParams
 from optitraj.close_loop import CloseLoopSim
+from apmuas_ros.drone import DroneCommander
 from rl_ros.PID import FirstOrderFilter, PID
-
 from typing import List, Dict, Any, Tuple
+from apmuas_ros.drone_math import DroneMath, geodetic_to_cartesian, convert_all_to_cartesian
+from apmuas_ros.drone import DroneCommander
 
 
 """
@@ -107,6 +109,7 @@ class MPCGuidance(Node):
             max_constraint=np.deg2rad(10),
             use_derivative=True,
             dt = 0.025)
+        
         self.state_sub = self.create_subscription(mavros.local_position.Odometry,
                                                   'mavros/local_position/odom',
                                                   self.mavros_state_callback,
@@ -117,6 +120,115 @@ class MPCGuidance(Node):
         self.num_controls: int = 4
         self.current_enu_controls: np.array = np.array(
             [np.nan]*self.num_controls)
+        
+        self.drone_commander: DroneCommander = DroneCommander(
+            master_link= 'udpin:127.0.0.1:14553'
+        )
+
+        self.home_lat: float = -35.3632622
+        self.home_lon: float = 149.1652374
+        
+        self.mission_items: List[Dict[str, Any]] = self.drone_commander.read_mission_items()
+        print("Waiting for mission items...")
+        self.does_mission_items_exist()
+        print("Mission items exist, proceeding with waypoints...")
+        self.cartesian_waypoints: List[List[float]] = [
+            [-145, 2, 60],
+            [150, 227, 70]
+        ] 
+        # TODO need to keep listening in case we have changed waypoints
+        self.cartesian_waypoints: List[List[float]] = self.convert_waypoints_to_cartesian()
+        self.current_target_index: int = 0
+
+
+    def does_mission_items_exist(self) -> None:
+        """
+        Checks if mission items exist.
+
+        Args:
+            None
+        
+        Returns:
+            None
+                
+        In this method we have to check if its less than 1 because mission planner caches the first waypoint i.e.:
+        [
+            [home_lat, home_lon, 0.0] is always in this list no matter what
+        ]
+        
+        It is less than or equal to 1 because the first item is a repeat/ghost waypoint that Mission Planner adds
+        Starting from 1 accounts for this repeat
+        """
+
+        while len(self.mission_items) <= 1: 
+            self.mission_items: List[Dict[str, Any]] = self.drone_commander.read_mission_items()
+    
+    def convert_waypoints_to_cartesian(self) -> List[List[float]]:
+        """
+        Converts geodetic coordinates (latitude, longitude) of waypoints to Cartesian coordinates.
+
+        Args:
+            None
+
+        Returns:
+            List[List[float]]: A list of Cartesian coordinates (x, y) for each waypoints, excluding the home location.
+        
+        """
+
+        print(self.mission_items)
+        print(self.home_lat, self.home_lon)
+
+        origin_lat: float = self.home_lat
+        origin_lon: float = self.home_lon
+        
+        #Empty list to hold the coordinates
+        coord_list = []
+        coord_list.append([origin_lat, origin_lon, 0.0])  # Add origin point
+
+        # Loop through the mission items and extract the x and y coordinates
+        for i, item in enumerate(self.mission_items):
+            if i == 0:
+                continue
+            if 'x' in item and 'y' in item:
+                coord_list.append([item['x'], item['y'], item['z']])
+            else:
+                print("Missing x or y in item:", item)
+ 
+
+        print(coord_list)
+
+        cartesian_coords = convert_all_to_cartesian(coord_list)
+
+        print("Cartesian Coordinates:")
+        for xy in cartesian_coords:
+            print(f"X: {xy[0]:.2f}, Y: {xy[1]:.2f}")
+        
+        # Returns past 1 because the first coordinate is the home location
+        return cartesian_coords[1:]
+
+    def calculate_line_of_sight(self, target_index:int) -> CtlTraj:
+        """
+        You need to calculate the trajectory based on the target position
+        Remember the yaw command must be RELATIVE 
+        """
+        if self.current_state[0] is None:
+            return
+        
+
+        #TODO: Index into target_waypoints properly with target_index parameter -> Done
+        # stores target position in ENU in target class list
+        # self.target_waypoints[target_index][0] = target_msg.pose.pose.position.x
+        # self.target_waypoints[target_index][1] = target_msg.pose.pose.position.y
+        # self.target_waypoints[target_index][2] = target_msg.pose.pose.position.z
+        
+        # calculate distance from current position to target position 
+        # dx, dy = lateral distance
+        # dz = vertical distance
+        # offset_x: float = np.sin(self.current_state[5]) * loiter_radius
+        # offset_y: float = np.cos(self.current_state[5]) * loiter_radius
+        dx:float = self.cartesian_waypoints[target_index][0] - self.current_state[0]
+        dy:float = self.cartesian_waypoints[target_index][1] - self.current_state[1]
+        dz:float = self.cartesian_waypoints[target_index][2] - self.current_state[2]
 
     def publish_traj(self,
                      solution: Dict[str, Any],
@@ -301,7 +413,7 @@ def get_time_idx(dt: float, solution_time: float,
 
 def main(args=None):
     rclpy.init(args=args)
-    traj_node = DirectionalTraj()
+    traj_node = MPCGuidance()
     rclpy.spin_once(traj_node)
 
     control_limits_dict: Dict[str, Dict[str, float]] = {
@@ -351,33 +463,103 @@ def main(args=None):
         u0=u_0,
         N=100
     )
+    
+    
+    # APMUAS 
+    aircraft_max_roll_deg: float = 40.0
+    alt_max_limit:float = 100.0 
+    alt_min_limit:float = 40.0
+    camera_range_m: float = 100.0
+    number_of_loiters: int = 2
+    ideal_aircraft_alt_m = DroneMath.compute_altitude_m(cam_range_m_alt = camera_range_m,
+                                max_roll_tan = aircraft_max_roll_deg,
+                                max_alt_m = alt_max_limit,
+                                min_alt_m = alt_min_limit)
+    
+    #TODO: pass tghrough the ideal altitude
+    for target in traj_node.cartesian_waypoints:
+        target[2] = ideal_aircraft_alt_m
 
+    ideal_loiter_radius = DroneMath.realtime_loiter_radius(mount_angle_phi_deg=aircraft_max_roll_deg,
+                                                           cam_range_m=camera_range_m,
+                                                           roll_limit_deg=aircraft_max_roll_deg)
+    bubble_radius: float = 15.0
+
+
+    # while rclpy.ok():
+    #     try:
+    #         rclpy.spin_once(traj_node, timeout_sec=0.1)
+    #         start_sol_time: float = time.time()
+    #         closed_loop_sim.x_init = traj_node.enu_state
+    #         solution: Dict[str, Any] = closed_loop_sim.run_single_step(
+    #             xF=xF,
+    #             x0=traj_node.enu_state,
+    #             u0=traj_node.current_enu_controls)
+    #         delta_sol_time: float = time.time() - start_sol_time
+    #         # distance
+    #         distance = np.linalg.norm(
+    #             np.array(traj_node.enu_state[0:2]) - np.array(xF[0:2]))
+    #         print("Distance: ", distance)
+    #         # publish the trajectory
+    #         traj_node.publish_traj(solution, delta_sol_time,
+    #                             idx_buffer=2)
+    #     except KeyboardInterrupt:
+    #         print("Keyboard interrupt")
+    #         break
+    
+    # traj_node.destroy_node()
+    # rclpy.shutdown()
+    # return 
+    
+    print("Alt: ", ideal_aircraft_alt_m)
+    print("Radius: ", ideal_loiter_radius)
+    #TODO: Call drone_math to calc ideal radius and alt -> Done
     while rclpy.ok():
         try:
-            rclpy.spin_once(traj_node, timeout_sec=0.1)
-            start_sol_time: float = time.time()
-            closed_loop_sim.x_init = traj_node.enu_state
-            solution: Dict[str, Any] = closed_loop_sim.run_single_step(
-                xF=xF,
-                x0=traj_node.enu_state,
-                u0=traj_node.current_enu_controls)
-            delta_sol_time: float = time.time() - start_sol_time
-            # distance
-            distance = np.linalg.norm(
-                np.array(traj_node.enu_state[0:2]) - np.array(xF[0:2]))
-            print("Distance: ", distance)
-            # publish the trajectory
-            traj_node.publish_traj(solution, delta_sol_time,
-                                idx_buffer=2)
+            if traj_node.current_state[0] is None:
+                rclpy.spin_once(traj_node, timeout_sec=0.05)
+                continue
+            """
+            TODO: Instead of using calculate line of sight we'll feed this 
+            into the MPC controller and then publish the trajectory
+            """
+            if traj_node.is_close(
+                radius_to_close=bubble_radius, target_idx=traj_node.current_target_index, loiter_radius=ideal_loiter_radius):
+                aircraft_speed = traj_node.current_state[6] 
+                loiter_time_sec = DroneMath.calculate_loiter_time(num_loiters=number_of_loiters, 
+                                                                  loiter_radius=ideal_loiter_radius,
+                                                                  aircraft_velocity_mps=aircraft_speed)
+                loiter_time_sec = 10
+                delta_time = 0
+                current_time = time.time()
+
+                while delta_time < loiter_time_sec:
+                    delta_time = time.time() - current_time                    
+                    current_trajectory = traj_node.calculate_line_of_sight(
+                        target_index=traj_node.current_target_index)
+                    # current_trajectory.roll = [aircraft_max_roll_deg, aircraft_max_roll_deg]
+                    # traj_node.trajectory_publisher.publish(current_trajectory)  
+                    print(delta_time, loiter_time_sec)
+                    rclpy.spin_once(traj_node, timeout_sec=0.05)
+                if traj_node.current_target_index >= len(traj_node.cartesian_waypoints) - 1:
+                    print("I'm done, resetting to 0", traj_node.current_target_index)
+                    traj_node.current_target_index = 0
+                else:
+                    print("incrementing counter", traj_node.current_target_index)
+            
+                    traj_node.current_target_index = (traj_node.current_target_index + 1)
+                
+            else:
+                traj_node.calculate_line_of_sight(
+                    target_index=traj_node.current_target_index)
+            rclpy.spin_once(traj_node, timeout_sec=0.05)
+        
         except KeyboardInterrupt:
-            print("Keyboard interrupt")
+            traj_node.get_logger().info('Keyboard Interrupt')
             break
     
     traj_node.destroy_node()
     rclpy.shutdown()
-    return 
-
+    
 if __name__ == "__main__":
-    x = 2 
-    y = 5
     main()

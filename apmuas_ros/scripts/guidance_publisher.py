@@ -109,8 +109,7 @@ class GuidancePublisher(Node):
         self.cartesian_waypoints: List[List[float]] = self.convert_waypoints_to_cartesian()
 
         self.current_target_index: int = 0
-
-
+        
         # smoothing for controller
         self.dz_filter : FirstOrderFilter = FirstOrderFilter(
             tau=0.5, dt=0.025, x0=0.0)
@@ -142,9 +141,9 @@ class GuidancePublisher(Node):
             None   # airspeed
         ]
 
-        self.trajectory_command_history :List[Dict[str, float]] = [
-
-        ]
+        self.trajectory_command_history :List[Dict[str, float]] = []
+        
+        
     def does_mission_items_exist(self) -> None:
         """
         Checks if mission items exist.

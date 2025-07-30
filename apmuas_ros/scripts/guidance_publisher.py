@@ -92,18 +92,21 @@ class GuidancePublisher(Node):
             master_link= 'udpin:127.0.0.1:14553'
         )
 
-        self.home_lat: float = -35.3632622
-        self.home_lon: float = 149.1652374
+# TODO: A method to get the home lat and lon position - instead of hardcoding it - double check that this is the home position [0]
         
         self.mission_items: List[Dict[str, Any]] = self.drone_commander.read_mission_items()
         print("Waiting for mission items...")
         self.does_mission_items_exist()
         print("Mission items exist, proceeding with waypoints...")
 
+        self.home_lat: float = self.mission_items[0]['x']  # Assuming 'x' is latitude
+        self.home_lon: float = self.mission_items[0]['y']  # Assuming 'y' is longitude
+
+
         self.cartesian_waypoints: List[List[float]] = [
             [-145, 2, 60],
             [150, 227, 70]
-        ] 
+        ]
 
         # TODO need to keep listening in case we have changed waypoints
         self.cartesian_waypoints: List[List[float]] = self.convert_waypoints_to_cartesian()
@@ -274,7 +277,7 @@ class GuidancePublisher(Node):
         pitch_cmd = np.clip(pitch_cmd, -np.deg2rad(12), np.deg2rad(10))
         
         dist: float = np.sqrt(dx**2 + dy**2)
-        print("Dist: ", dist)
+        #print("Dist: ", dist)
         
         enu_yaw_rad:float = np.arctan2(dy, dx)
         #ned_yaw_cmd_rad:float = yaw_enu_to_ned(enu_yaw_rad)
@@ -350,6 +353,74 @@ class GuidancePublisher(Node):
         if radius_xy_good and altitude_z_good:
             return True
         return False
+    
+    def check_for_new_waypoints(self) -> None:
+        """
+        TODO: Check if the target waypoints have changed.
+        
+        This method should be called periodically to check if the target waypoints
+        have been updated. If they have, it will reassign the cartesian_waypoints.
+        """
+        temp_mission_item = self.drone_commander.read_mission_items()
+        temp_cartesian_waypoints : List[List[float]] = []
+        
+        print(temp_mission_item)
+
+        origin_lat: float = temp_mission_item[0]['x']  # Assuming 'x' is latitude
+        origin_lon: float = temp_mission_item[0]['y']  # Assuming 'y' is longitude
+
+        #Empty list to hold the coordinates
+        coord_list = []
+        coord_list.append([origin_lat, origin_lon, 0.0])  # Add origin point
+
+        # Loop through the mission items and extract the x and y coordinates
+        for i, item in enumerate(temp_mission_item):
+            if i == 0:
+                continue
+            if 'x' in item and 'y' in item:
+                coord_list.append([item['x'], item['y'], item['z']])
+            else:
+                print("Missing x or y in item:", item)
+ 
+
+        print(coord_list)
+
+        temp_cartesian_waypoints = convert_all_to_cartesian(coord_list)
+
+        print("New Cartesian Coordinates:")
+        for xy in temp_cartesian_waypoints:
+            print(f"X: {xy[0]:.2f}, Y: {xy[1]:.2f}")
+        
+        # Returns past 1 because the first coordinate is the home location
+        #return cartesian_coords[1:]
+        #GuidancePublisher.convert_waypoints_to_cartesian(temp_mission_item)
+        # if self.cartesian_waypoints != temp_cartesian_waypoints[1:]:
+        #     self.cartesian_waypoints = temp_cartesian_waypoints
+        #     self.current_target_index = 0
+        #     print("New waypoints detected, updating cartesian_waypoints.")
+
+        if len(self.cartesian_waypoints) != len(temp_cartesian_waypoints[1:]):
+            self.cartesian_waypoints = temp_cartesian_waypoints[1:]
+            self.current_target_index = 0
+            print("New waypoints detected, updating cartesian_waypoints.")
+        else:
+            difference: bool = False
+            for i in range(len(self.cartesian_waypoints)):
+                if self.cartesian_waypoints[i][0] != temp_cartesian_waypoints[i+1][0]:
+                    difference = True
+                    break
+                if self.cartesian_waypoints[i][1] != temp_cartesian_waypoints[i+1][1]:
+                    difference = True
+                    break
+        
+            if difference:
+                self.cartesian_waypoints = temp_cartesian_waypoints[1:]
+                self.current_target_index = 0
+                print("New waypoints detected, updating cartesian_waypoints.")
+
+
+            
+        
 
 def main() -> None:
     rclpy.init()
@@ -359,12 +430,14 @@ def main() -> None:
     alt_min_limit:float = 40.0
     camera_range_m: float = 100.0
     number_of_loiters: int = 2
+    cont_check_wait_time: float = 5.0
+
     ideal_aircraft_alt_m = DroneMath.compute_altitude_m(cam_range_m_alt = camera_range_m,
                                 max_roll_tan = aircraft_max_roll_deg,
                                 max_alt_m = alt_max_limit,
                                 min_alt_m = alt_min_limit)
     
-    #TODO: pass tghrough the ideal altitude
+    #TODO: pass tghrough the ideal altitude when there is a change in target waypoints
     for target in guidance_publisher.cartesian_waypoints:
         target[2] = ideal_aircraft_alt_m
 
@@ -376,14 +449,26 @@ def main() -> None:
     print("Alt: ", ideal_aircraft_alt_m)
     print("Radius: ", ideal_loiter_radius)
     #TODO: Call drone_math to calc ideal radius and alt -> Done
+
+    cont_checking_delta_time = 0.0
+    cont_checking_current_time = time.time()
+    cont_last_call_time = cont_checking_current_time
+
+
+
     while rclpy.ok():
         try:
+            now = time.time()
+            cont_checking_delta_time = now - cont_checking_current_time
+            if (now - cont_last_call_time) >= cont_check_wait_time:
+                guidance_publisher.check_for_new_waypoints()
+                cont_last_call_time = now
+
+
             if guidance_publisher.current_state[0] is None:
                 rclpy.spin_once(guidance_publisher, timeout_sec=0.05)
                 continue
 
-            #TODO: if guidance_publisher.is_close_enough()
-            #TODO: find a place to increment target_index -> Done
             '''
             send the roll and alt from calculated values above
             straight to flight controller

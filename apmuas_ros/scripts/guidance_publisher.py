@@ -486,7 +486,7 @@ def main() -> None:
                 loiter_time_sec = DroneMath.calculate_loiter_time(num_loiters=number_of_loiters, 
                                                                   loiter_radius=ideal_loiter_radius,
                                                                   aircraft_velocity_mps=aircraft_speed)
-                loiter_time_sec = 10
+            
                 delta_time = 0
                 current_time = time.time()
 

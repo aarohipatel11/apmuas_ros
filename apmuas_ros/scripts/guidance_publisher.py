@@ -362,6 +362,11 @@ class GuidancePublisher(Node):
         have been updated. If they have, it will reassign the cartesian_waypoints.
         """
         temp_mission_item = self.drone_commander.read_mission_items()
+        
+        if not temp_mission_item:
+            print("No mission items found.")
+            return
+        
         temp_cartesian_waypoints : List[List[float]] = []
         
         print(temp_mission_item)

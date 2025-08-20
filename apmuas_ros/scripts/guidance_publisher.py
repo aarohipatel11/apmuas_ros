@@ -96,7 +96,8 @@ class GuidancePublisher(Node):
         
         self.mission_items: List[Dict[str, Any]] = self.drone_commander.read_mission_items()
         print("Waiting for mission items...")
-        self.does_mission_items_exist()
+        # self.does_mission_items_exist()
+        self.keep_listening_for_mission_items()
         print("Mission items exist, proceeding with waypoints...")
 
         self.home_lat: float = self.mission_items[0]['x']  # Assuming 'x' is latitude
@@ -148,16 +149,21 @@ class GuidancePublisher(Node):
         self.trajectory_command_history :List[Dict[str, float]] = [
 
         ]
-    def does_mission_items_exist(self) -> None:
+  
+    def keep_listening_for_mission_items(self) -> None:
         """
-        Checks if mission items exist.
+        We will keep listening for waypoints to be greater than 1 because the first index is the home location.
+        Once we have actual waypoints, then we will update the mission items.
 
-        Args:
-            None
-        
-        Returns:
-            None
-                
+    
+        """
+        while self.does_waypoints_exist() == False:
+            continue
+        self.mission_items: List[Dict[str, Any]] = self.drone_commander.read_mission_items()
+    
+    def does_waypoints_exist(self) -> bool:
+        """
+        Checks if waypoints exist.
         In this method we have to check if its less than 1 because mission planner caches the first waypoint i.e.:
         [
             [home_lat, home_lon, 0.0] is always in this list no matter what
@@ -165,10 +171,20 @@ class GuidancePublisher(Node):
         
         It is less than or equal to 1 because the first item is a repeat/ghost waypoint that Mission Planner adds
         Starting from 1 accounts for this repeat
-        """
 
-        while len(self.mission_items) <= 1: 
-            self.mission_items: List[Dict[str, Any]] = self.drone_commander.read_mission_items()
+        Args:
+            None
+        
+        Returns:
+            bool: True if waypoints exist, False otherwise.
+        
+        """
+        mission_items = self.drone_commander.read_mission_items()
+        if len(mission_items) <= 1:
+            return False
+        else:
+            return True
+        
     
     def convert_waypoints_to_cartesian(self) -> List[List[float]]:
         """
@@ -362,6 +378,8 @@ class GuidancePublisher(Node):
         have been updated. If they have, it will reassign the cartesian_waypoints.
         """
         temp_mission_item = self.drone_commander.read_mission_items()
+        if not temp_mission_item:
+            return
         temp_cartesian_waypoints : List[List[float]] = []
         
         print(temp_mission_item)
@@ -373,10 +391,13 @@ class GuidancePublisher(Node):
         coord_list = []
         coord_list.append([origin_lat, origin_lon, 0.0])  # Add origin point
 
-        # Loop through the mission items and extract the x and y coordinates
+        # Loop through the mission items and extract the x and y coordinates.
+        # Because the first item is the home location, if any waypoints exist, we skip the first item and continue to the waypoints. 
+        # However, if there are no waypoints, we do not skip the first item in order to have it return to the home location.
         for i, item in enumerate(temp_mission_item):
             if i == 0:
-                continue
+                if self.does_waypoints_exist() == True:
+                    continue
             if 'x' in item and 'y' in item:
                 coord_list.append([item['x'], item['y'], item['z']])
             else:

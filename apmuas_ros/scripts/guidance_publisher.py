@@ -370,8 +370,6 @@ class GuidancePublisher(Node):
             return True
         return False
     
- 
- 
 def check_for_new_waypoints(
     mission_items: List[dict],
     previous_cartesian_waypoints: List[List[float]]
@@ -430,9 +428,6 @@ def check_for_new_waypoints(
  
     return (cartesian_waypoints[1:], updated)
 
-            
-        
-
 def main() -> None:
     rclpy.init()
     guidance_publisher:GuidancePublisher = GuidancePublisher()
@@ -464,16 +459,14 @@ def main() -> None:
     cont_checking_delta_time = 0.0
     cont_checking_current_time = time.time()
     cont_last_call_time = cont_checking_current_time
-
-
     previous_waypoints = []
  
     while rclpy.ok():
         try:
             if (time.time() - cont_last_call_time) >= cont_check_wait_time:
-                mission_items = guidance_publisher.drone_commander.read_mission_items() # Read mission items from drone commander externally for independent functionality
+                mission_items = guidance_publisher.drone_commander.read_mission_items()
                 previous_waypoints, updated = check_for_new_waypoints( 
-                    mission_items, previous_waypoints # Parameters
+                    mission_items, previous_waypoints 
                 )
     
                 if updated:
@@ -486,19 +479,6 @@ def main() -> None:
                 rclpy.spin_once(guidance_publisher, timeout_sec=0.05)
                 continue
 
-
-
-            '''
-            send the roll and alt from calculated values above
-            straight to flight controller
-            call publish_traj function
-            calculate how long it would take for x amount of loiters
-            start_time 
-            while loop once time is over 
-            done, move on to next waypoint in target_waypoints
-            else: 
-                calculate_line_of_sight()
-            '''
             if guidance_publisher.is_close(
                 radius_to_close=bubble_radius, target_idx=guidance_publisher.current_target_index, loiter_radius=ideal_loiter_radius):
                 aircraft_speed = guidance_publisher.current_state[6] 
@@ -530,7 +510,6 @@ def main() -> None:
                     target_index=guidance_publisher.current_target_index)
                 # print("going to line of sight")
     
-        
             rclpy.spin_once(guidance_publisher, timeout_sec=0.05)
         
         except KeyboardInterrupt:

@@ -25,8 +25,8 @@ class PubExample(Node):
         msg = String()
         msg.data = "Hello, it's me!"
         self.some_publisher.publish(msg)
-
-
+        
+        
 def main(args=None):
     rclpy.init(args=args)
     pub_example = PubExample()

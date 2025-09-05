@@ -15,7 +15,7 @@ from drone_interfaces.msg import Telem, CtlTraj
 #from apmuas_ros import CtlTraj
 from apmuas_ros import rotation_utils as rot_utils
 from re import S
-from typing import List, Dict, Any
+from typing import List, Dict, Tuple, Any
 from mavros.base import SENSOR_QOS
 from apmuas_ros.PID import PID, FirstOrderFilter
 from apmuas_ros.drone_math import DroneMath, geodetic_to_cartesian, convert_all_to_cartesian
@@ -96,7 +96,8 @@ class GuidancePublisher(Node):
         
         self.mission_items: List[Dict[str, Any]] = self.drone_commander.read_mission_items()
         print("Waiting for mission items...")
-        self.does_mission_items_exist()
+        # self.does_mission_items_exist()
+        self.keep_listening_for_mission_items()
         print("Mission items exist, proceeding with waypoints...")
 
         self.home_lat: float = self.mission_items[0]['x']  # Assuming 'x' is latitude
@@ -148,16 +149,21 @@ class GuidancePublisher(Node):
         self.trajectory_command_history :List[Dict[str, float]] = [
 
         ]
-    def does_mission_items_exist(self) -> None:
+  
+    def keep_listening_for_mission_items(self) -> None:
         """
-        Checks if mission items exist.
+        We will keep listening for waypoints to be greater than 1 because the first index is the home location.
+        Once we have actual waypoints, then we will update the mission items.
 
-        Args:
-            None
-        
-        Returns:
-            None
-                
+    
+        """
+        while self.does_waypoints_exist() == False:
+            continue
+        self.mission_items: List[Dict[str, Any]] = self.drone_commander.read_mission_items()
+    
+    def does_waypoints_exist(self) -> bool:
+        """
+        Checks if waypoints exist.
         In this method we have to check if its less than 1 because mission planner caches the first waypoint i.e.:
         [
             [home_lat, home_lon, 0.0] is always in this list no matter what
@@ -165,10 +171,20 @@ class GuidancePublisher(Node):
         
         It is less than or equal to 1 because the first item is a repeat/ghost waypoint that Mission Planner adds
         Starting from 1 accounts for this repeat
-        """
 
-        while len(self.mission_items) <= 1: 
-            self.mission_items: List[Dict[str, Any]] = self.drone_commander.read_mission_items()
+        Args:
+            None
+        
+        Returns:
+            bool: True if waypoints exist, False otherwise.
+        
+        """
+        mission_items = self.drone_commander.read_mission_items()
+        if len(mission_items) <= 1:
+            return False
+        else:
+            return True
+        
     
     def convert_waypoints_to_cartesian(self) -> List[List[float]]:
         """
@@ -354,78 +370,63 @@ class GuidancePublisher(Node):
             return True
         return False
     
-    def check_for_new_waypoints(self) -> None:
-        """
-        TODO: Check if the target waypoints have changed.
-        
-        This method should be called periodically to check if the target waypoints
-        have been updated. If they have, it will reassign the cartesian_waypoints.
-        """
-        temp_mission_item = self.drone_commander.read_mission_items()
-        
-        if not temp_mission_item:
-            print("No mission items found.")
-            return
-        
-        temp_cartesian_waypoints : List[List[float]] = []
-        
-        print(temp_mission_item)
+def check_for_new_waypoints(
+    mission_items: List[dict],
+    previous_cartesian_waypoints: List[List[float]]
+) -> Tuple[List[List[float]], bool]:
+    """
+    Checks for new waypoints in the mission items and converts them to Cartesian coordinates, returning the updated waypoints and a boolean indicating if they have changed.
 
-        origin_lat: float = temp_mission_item[0]['x']  # Assuming 'x' is latitude
-        origin_lon: float = temp_mission_item[0]['y']  # Assuming 'y' is longitude
+    Args:
+        mission_items (List[dict]): List of mission items containing 'x', 'y', and 'z' coordinates.
+        previous_cartesian_waypoints (List[List[float]]): List of previous Cartesian waypoints. 
 
-        #Empty list to hold the coordinates
-        coord_list = []
-        coord_list.append([origin_lat, origin_lon, 0.0])  # Add origin point
+    Returns:
+        Tuple[List[List[float]], bool]: A tuple containing the updated Cartesian waypoints and a boolean indicating if the waypoints have changed. (True if the waypoints have changed, False otherwise)
+    """
+    # Check if mission_items is empty
+    if not mission_items:
+        print("No mission items found.")
+        return previous_cartesian_waypoints, False
+    
+    print(mission_items)
 
-        # Loop through the mission items and extract the x and y coordinates
-        for i, item in enumerate(temp_mission_item):
-            if i == 0:
-                continue
-            if 'x' in item and 'y' in item:
-                coord_list.append([item['x'], item['y'], item['z']])
-            else:
-                print("Missing x or y in item:", item)
- 
-
-        print(coord_list)
-
-        temp_cartesian_waypoints = convert_all_to_cartesian(coord_list)
-
-        print("New Cartesian Coordinates:")
-        for xy in temp_cartesian_waypoints:
-            print(f"X: {xy[0]:.2f}, Y: {xy[1]:.2f}")
-        
-        # Returns past 1 because the first coordinate is the home location
-        #return cartesian_coords[1:]
-        #GuidancePublisher.convert_waypoints_to_cartesian(temp_mission_item)
-        # if self.cartesian_waypoints != temp_cartesian_waypoints[1:]:
-        #     self.cartesian_waypoints = temp_cartesian_waypoints
-        #     self.current_target_index = 0
-        #     print("New waypoints detected, updating cartesian_waypoints.")
-
-        if len(self.cartesian_waypoints) != len(temp_cartesian_waypoints[1:]):
-            self.cartesian_waypoints = temp_cartesian_waypoints[1:]
-            self.current_target_index = 0
-            print("New waypoints detected, updating cartesian_waypoints.")
+    origin_lat = mission_items[0]['x']
+    origin_lon = mission_items[0]['y']
+    
+    coord_list = []
+    coord_list.append([origin_lat, origin_lon, 0.0])
+    
+    for i, item in enumerate(mission_items):
+        if i == 0:
+            continue # Skip the first item (home location)
+        if all(k in item for k in ('x','y','z')):
+            coord_list.append([item['x'], item['y'], item['z']])
         else:
-            difference: bool = False
-            for i in range(len(self.cartesian_waypoints)):
-                if self.cartesian_waypoints[i][0] != temp_cartesian_waypoints[i+1][0]:
-                    difference = True
-                    break
-                if self.cartesian_waypoints[i][1] != temp_cartesian_waypoints[i+1][1]:
-                    difference = True
-                    break
-        
-            if difference:
-                self.cartesian_waypoints = temp_cartesian_waypoints[1:]
-                self.current_target_index = 0
-                print("New waypoints detected, updating cartesian_waypoints.")
-
-
-            
-        
+            print("Missing x, y, or z in item:", item)
+    
+    print(coord_list)
+    
+    cartesian_waypoints = convert_all_to_cartesian(coord_list)
+    
+    # Boolean to check if the cartesian waypoints have changed
+    # We will compare the previous_cartesian_waypoints with the new cartesian_waypoints
+    # We will skip the first element because it is the home location
+    updated = False
+    if len(previous_cartesian_waypoints) != len(cartesian_waypoints[1:]):
+        updated = True
+    else:
+        for i in range(len(previous_cartesian_waypoints)):
+            if previous_cartesian_waypoints[i][0] != cartesian_waypoints[i+1][0] or \
+               previous_cartesian_waypoints[i][1] != cartesian_waypoints[i+1][1]:
+                updated = True
+                break
+ 
+    print("Cartesian Coordinates:")
+    for xy in cartesian_waypoints:
+        print(f"X: {xy[0]:.2f}, Y: {xy[1]:.2f}")
+ 
+    return (cartesian_waypoints[1:], updated)
 
 def main() -> None:
     rclpy.init()
@@ -458,33 +459,26 @@ def main() -> None:
     cont_checking_delta_time = 0.0
     cont_checking_current_time = time.time()
     cont_last_call_time = cont_checking_current_time
-
-
-
+    previous_waypoints = []
+ 
     while rclpy.ok():
         try:
-            now = time.time()
-            cont_checking_delta_time = now - cont_checking_current_time
-            if (now - cont_last_call_time) >= cont_check_wait_time:
-                guidance_publisher.check_for_new_waypoints()
-                cont_last_call_time = now
-
-
+            if (time.time() - cont_last_call_time) >= cont_check_wait_time:
+                mission_items = guidance_publisher.drone_commander.read_mission_items()
+                previous_waypoints, updated = check_for_new_waypoints( 
+                    mission_items, previous_waypoints 
+                )
+    
+                if updated:
+                    current_target_index = 0
+                    print("New waypoints detected, updating cartesian_waypoints.")
+    
+                cont_last_call_time = time.time()
+    
             if guidance_publisher.current_state[0] is None:
                 rclpy.spin_once(guidance_publisher, timeout_sec=0.05)
                 continue
 
-            '''
-            send the roll and alt from calculated values above
-            straight to flight controller
-            call publish_traj function
-            calculate how long it would take for x amount of loiters
-            start_time 
-            while loop once time is over 
-            done, move on to next waypoint in target_waypoints
-            else: 
-                calculate_line_of_sight()
-            '''
             if guidance_publisher.is_close(
                 radius_to_close=bubble_radius, target_idx=guidance_publisher.current_target_index, loiter_radius=ideal_loiter_radius):
                 aircraft_speed = guidance_publisher.current_state[6] 
@@ -516,7 +510,6 @@ def main() -> None:
                     target_index=guidance_publisher.current_target_index)
                 # print("going to line of sight")
     
-        
             rclpy.spin_once(guidance_publisher, timeout_sec=0.05)
         
         except KeyboardInterrupt:

@@ -113,6 +113,8 @@ class GuidancePublisher(Node):
         self.cartesian_waypoints: List[List[float]] = self.convert_waypoints_to_cartesian()
 
         self.current_target_index: int = 0
+        self.controller_mode: int = 0
+        self.last_controller_mode = None  # for tracking changes in mode
 
 
         # smoothing for controller
@@ -370,6 +372,41 @@ class GuidancePublisher(Node):
             return True
         return False
     
+    def controller_state_machine(self, target_index: int) -> None:
+        if self.controller_mode == 0:
+            if self.last_controller_mode != 0:
+                print("Using LTC controller")
+            self.calculate_line_of_sight(target_index)
+
+        elif self.controller_mode == 1:
+            if self.last_controller_mode != 1:
+                print("Using MPC controller")
+            # Add MPC logic here
+
+        else:
+            print(f"Unknown controller_mode: {self.controller_mode}, defaulting to LTC.")
+            self.calculate_line_of_sight(target_index)
+
+
+        # Update the previous controller mode for tracking
+        self.last_controller_mode = self.controller_mode
+
+
+    def set_controller_mode(self, mode: int) -> None:
+        """
+        Sets the controller mode.
+        0 = LTC (Line-of-sight Tracking Controller)
+        1 = MPC (Model Predictive Controller)
+        Any other input defaults to 0 (LTC).
+        """
+        if mode in [0, 1]:
+            self.controller_mode = mode
+            print(f"Controller mode set to: {self.controller_mode}")
+        else:
+            print(f"Invalid controller mode: {mode}, defaulting to 0 (LTC).")
+            self.controller_mode = 0
+
+ 
 def check_for_new_waypoints(
     mission_items: List[dict],
     previous_cartesian_waypoints: List[List[float]]
@@ -427,10 +464,11 @@ def check_for_new_waypoints(
         print(f"X: {xy[0]:.2f}, Y: {xy[1]:.2f}")
  
     return (cartesian_waypoints[1:], updated)
-
+            
 def main() -> None:
     rclpy.init()
     guidance_publisher:GuidancePublisher = GuidancePublisher()
+    guidance_publisher.set_controller_mode(0)  # Change to 1 to test "Using MPC"
     aircraft_max_roll_deg: float = 40.0
     alt_max_limit:float = 100.0 
     alt_min_limit:float = 40.0
@@ -442,8 +480,7 @@ def main() -> None:
                                 max_roll_tan = aircraft_max_roll_deg,
                                 max_alt_m = alt_max_limit,
                                 min_alt_m = alt_min_limit)
-    
-    #TODO: pass tghrough the ideal altitude when there is a change in target waypoints
+
     for target in guidance_publisher.cartesian_waypoints:
         target[2] = ideal_aircraft_alt_m
 
@@ -454,7 +491,6 @@ def main() -> None:
 
     print("Alt: ", ideal_aircraft_alt_m)
     print("Radius: ", ideal_loiter_radius)
-    #TODO: Call drone_math to calc ideal radius and alt -> Done
 
     cont_checking_delta_time = 0.0
     cont_checking_current_time = time.time()
@@ -464,9 +500,9 @@ def main() -> None:
     while rclpy.ok():
         try:
             if (time.time() - cont_last_call_time) >= cont_check_wait_time:
-                mission_items = guidance_publisher.drone_commander.read_mission_items()
+                mission_items = guidance_publisher.drone_commander.read_mission_items() 
                 previous_waypoints, updated = check_for_new_waypoints( 
-                    mission_items, previous_waypoints 
+                    mission_items, previous_waypoints
                 )
     
                 if updated:
@@ -491,7 +527,7 @@ def main() -> None:
 
                 while delta_time < loiter_time_sec:
                     delta_time = time.time() - current_time                    
-                    current_trajectory = guidance_publisher.calculate_line_of_sight(
+                    current_trajectory = guidance_publisher.controller_state_machine(
                         target_index=guidance_publisher.current_target_index)
                     # current_trajectory.roll = [aircraft_max_roll_deg, aircraft_max_roll_deg]
                     # guidance_publisher.trajectory_publisher.publish(current_trajectory)  
@@ -506,14 +542,13 @@ def main() -> None:
                     guidance_publisher.current_target_index = (guidance_publisher.current_target_index + 1)
                 
             else:
-                guidance_publisher.calculate_line_of_sight(
+                guidance_publisher.controller_state_machine(
                     target_index=guidance_publisher.current_target_index)
                 # print("going to line of sight")
     
             rclpy.spin_once(guidance_publisher, timeout_sec=0.05)
         
         except KeyboardInterrupt:
-            
             guidance_publisher.get_logger().info('Keyboard Interrupt')
             break
     

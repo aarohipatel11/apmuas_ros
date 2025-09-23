@@ -24,7 +24,9 @@ import time
 """
 For this application we will be sending roll, pitch yaw commands to the drone
 """
-
+# Controller Mode Enumerations
+LTC_MODE = 0  
+MPC_MODE = 1  
 
 def yaw_enu_to_ned(yaw_enu:float)-> float:
     """
@@ -113,7 +115,7 @@ class GuidancePublisher(Node):
         self.cartesian_waypoints: List[List[float]] = self.convert_waypoints_to_cartesian()
 
         self.current_target_index: int = 0
-        self.controller_mode: int = 0
+        self.controller_mode: int = LTC_MODE
         self.last_controller_mode = None  # for tracking changes in mode
 
 
@@ -373,16 +375,17 @@ class GuidancePublisher(Node):
         return False
     
     def controller_state_machine(self, target_index: int) -> None:
-        if self.controller_mode == 0:
-            if self.last_controller_mode != 0:
+        #todo: add enumeraters for 0 and 1 - replace numbers with variable labels
+        if self.controller_mode == LTC_MODE:
+            if self.last_controller_mode != LTC_MODE:
                 print("Using LTC controller")
             self.calculate_line_of_sight(target_index)
 
-        elif self.controller_mode == 1:
-            if self.last_controller_mode != 1:
+        elif self.controller_mode == MPC_MODE:
+            if self.last_controller_mode != MPC_MODE:
                 print("Using MPC controller")
             # Add MPC logic here
-
+            
         else:
             print(f"Unknown controller_mode: {self.controller_mode}, defaulting to LTC.")
             self.calculate_line_of_sight(target_index)
@@ -395,16 +398,16 @@ class GuidancePublisher(Node):
     def set_controller_mode(self, mode: int) -> None:
         """
         Sets the controller mode.
-        0 = LTC (Line-of-sight Tracking Controller)
-        1 = MPC (Model Predictive Controller)
-        Any other input defaults to 0 (LTC).
+        LTC_MODE = 0
+        MPC_MODE = 1
+        Any other value defaults to LTC_MODE
         """
-        if mode in [0, 1]:
+        if mode in [LTC_MODE, MPC_MODE]:
             self.controller_mode = mode
             print(f"Controller mode set to: {self.controller_mode}")
         else:
             print(f"Invalid controller mode: {mode}, defaulting to 0 (LTC).")
-            self.controller_mode = 0
+            self.controller_mode = LTC_MODE
 
  
 def check_for_new_waypoints(
@@ -468,7 +471,7 @@ def check_for_new_waypoints(
 def main() -> None:
     rclpy.init()
     guidance_publisher:GuidancePublisher = GuidancePublisher()
-    guidance_publisher.set_controller_mode(0)  # Change to 1 to test "Using MPC"
+    guidance_publisher.set_controller_mode(LTC_MODE)  # Change to MPC_MODE "Using MPC"
     aircraft_max_roll_deg: float = 40.0
     alt_max_limit:float = 100.0 
     alt_min_limit:float = 40.0

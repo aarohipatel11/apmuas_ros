@@ -375,7 +375,6 @@ class GuidancePublisher(Node):
         return False
     
     def controller_state_machine(self, target_index: int) -> None:
-        #todo: add enumeraters for 0 and 1 - replace numbers with variable labels
         if self.controller_mode == LTC_MODE:
             if self.last_controller_mode != LTC_MODE:
                 print("Using LTC controller")

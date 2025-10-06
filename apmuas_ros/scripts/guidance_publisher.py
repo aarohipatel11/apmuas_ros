@@ -375,6 +375,15 @@ class GuidancePublisher(Node):
         return False
     
     def controller_state_machine(self, target_index: int) -> None:
+        """
+        Executes the appropriate controller logic based on the current control mode.
+         
+        Args:
+            target_index (int): Index of the current target waypoint.
+
+        Returns:
+            None     
+        """
         if self.controller_mode == LTC_MODE:
             if self.last_controller_mode != LTC_MODE:
                 print("Using LTC controller")

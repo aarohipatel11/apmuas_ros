@@ -120,6 +120,7 @@ class GuidancePublisher(Node):
 
 
         # smoothing for controller
+        # LTC: Lines 123-141
         self.dz_filter : FirstOrderFilter = FirstOrderFilter(
             tau=0.5, dt=0.025, x0=0.0)
         self.yaw_filter : FirstOrderFilter = FirstOrderFilter(
@@ -139,7 +140,7 @@ class GuidancePublisher(Node):
             use_derivative=True,
             dt = 0.025)
         
-        
+        # Can remove this from LTC, can have as a request in interface 
         self.current_state: List[float] = [
             None,  # x
             None,  # y

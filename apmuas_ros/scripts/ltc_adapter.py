@@ -9,9 +9,9 @@ class LTCAdapter(ControllerInterface):
 
     """
     def __init__(self):
-        pass
+        self.controller = LTCController()
     
-    #TODO: Add missing dependencies for calculate_los like state tracking, controllers/filters, and trajectory.publisher
+    #TODO: Add missing dependencies for calculate_los like state tracking, controllers/filters, roll_cmd, pitch_cmd, yaw_cmd, trajectory.publisher, etc.
 
     def get_commands(self, current_state: List[float], target_state: List[float]) -> Any:
         """
@@ -117,6 +117,7 @@ class LTCAdapter(ControllerInterface):
         self.trajectory_command_history.append(trajectory_dict)
         return trajectory
     
+    # From drone_math.py
     def calculate_loiter_time(self, num_loiters:int, loiter_radius: float, aircraft_velocity_mps: float) -> float: 
         loiter_circumference: float = (2) * (np.pi) * (loiter_radius)
         total_distance: float = loiter_circumference * num_loiters
@@ -149,6 +150,19 @@ class LTCAdapter(ControllerInterface):
         
         # wrap the angle to [-pi, pi]
         return wrap_to_pi(yaw_cmd)
+    
+    def wrap_to_pi(angle:float) -> float:
+        """
+        Wrap an angle in radians to the range [-pi, pi].
+
+        Parameters:
+            angle (float): Angle in radians.
+        
+        Returns:
+            float: Angle wrapped to [-pi, pi].
+        """
+        return (angle + np.pi) % (2 * np.pi) - np.pi
+
 
     # State Management 
     

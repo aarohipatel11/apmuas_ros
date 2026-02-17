@@ -9,8 +9,27 @@ class LTCAdapter(ControllerInterface):
 
     """
     def __init__(self):
-        self.controller = LTCController()
-    
+     # Option 1: Just do it all here with out needing to construct a class
+     # FirstOrderFilter class in PID.py
+        self.dz_filter : FirstOrderFilter = FirstOrderFilter(
+            tau=0.5, dt=0.025, x0=0.0)
+        self.yaw_filter : FirstOrderFilter = FirstOrderFilter(
+            tau=0.3, dt=0.025, x0=0.0)
+        
+        self.dz_controller: PID = PID(
+            kp=0.025, ki=0.0, kd=0.01,
+            min_constraint=np.deg2rad(-12),
+            max_constraint=np.deg2rad(10),
+            use_derivative=True,
+            dt = 0.025)
+        
+        self.roll_controller: PID = PID(
+            kp=0.5, ki=0.0, kd=0.05,
+            min_constraint=np.deg2rad(-40),
+            max_constraint=np.deg2rad(40),
+            use_derivative=True,
+            dt = 0.025)
+
     #TODO: Add missing dependencies for calculate_los like state tracking, controllers/filters, roll_cmd, pitch_cmd, yaw_cmd, trajectory.publisher, etc.
 
     def get_commands(self, current_state: List[float], target_state: List[float]) -> Any:
@@ -162,7 +181,106 @@ class LTCAdapter(ControllerInterface):
             float: Angle wrapped to [-pi, pi].
         """
         return (angle + np.pi) % (2 * np.pi) - np.pi
+    
+    # Need 
+    # FirstOrderFilter (PID.py, class), -> DONE
+    # PID (PID.py, class), -> DONE
+    # CtlTraj (_ctl_traj.py, class) -> ?
 
+    class FirstOrderFilter:
+        """
+        First-order filter class for smoothing a setpoint signal.
+        https://en.wikipedia.org/wiki/Low-pass_filter
+        Args:
+            tau (float): Time constant of the filter.
+            dt (float): Time step for the filter.
+            x0 (float): Initial value of the filter.
+        Methods:
+            filter(x: float) -> float:
+                Applies the first-order filter to the input signal.
+        """
+        def __init__(self, tau:float, dt:float, 
+                    x0:float) -> None:
+            self.tau:float = tau
+            self.dt:float = dt
+            self.x0:float = x0
+            self.alpha:float = dt / (tau + dt)
+            
+        def filter(self, x:float) -> float:
+            """
+            Applies the first-order filter to the input signal.
+            Args:
+                x (float): Input signal to be filtered.
+            Returns:
+                float: Filtered output signal.
+            """
+            self.x0 = (1 - self.alpha) * self.x0 + self.alpha * x
+            return self.x0
+
+class PID:
+    """
+    PID controller class for controlling a system with a setpoint and current value.
+    Args:
+        min_constraint (float): Minimum constraint for the output.
+        max_constraint (float): Maximum constraint for the output.
+        use_integral (bool): Flag to use integral term in PID control.
+        use_derivative (bool): Flag to use derivative term in PID control.
+        kp (float): Proportional gain.
+        ki (float): Integral gain.
+        kd (float): Derivative gain.
+        dt (float): Time step for the controller.
+    
+    Methods:
+        compute(setpoint: float, current_value: float, dt: float) -> float:
+            Computes the PID control output based on the setpoint and current value.
+            
+    """
+    def __init__(self,
+        min_constraint:float,
+        max_constraint:float,
+        use_integral:bool = False,
+        use_derivative:bool = False,
+        kp:float=0.05,
+        ki:float=0.0,
+        kd:float=0.0,
+        dt:float=0.05) -> None:
+
+        self.min_constraint:float = min_constraint
+        self.max_constraint:float = max_constraint
+        self.dt:float = dt
+                
+        self.use_integral:bool = use_integral
+        self.use_derivative:bool = use_derivative
+        
+        self.kp:float = kp
+        self.ki:float = ki
+        self.kd:float = kd
+        self.prev_error: float = None
+        self.integral: float = 0.0
+        
+    def compute(self,
+        setpoint:float,
+        current_value:float,
+        dt:float) -> float:
+        
+        error:float = setpoint - current_value
+        derivative:float = (error - self.prev_error) / dt
+        self.integral += error * dt
+        
+        if self.use_integral and self.use_derivative:
+            output = (self.kp * error) + \
+                (self.ki * self.integral) + (self.kd * derivative)
+        elif self.use_integral:
+            output:float = (self.kp * error) + \
+                (self.ki * self.integral)
+        elif self.use_derivative:
+            output:float = (self.kp * error) + (self.kd * derivative)
+        else:
+            output:float = (self.kp * error)
+        
+        self.prev_error = error
+        
+        return output
 
     # State Management 
     

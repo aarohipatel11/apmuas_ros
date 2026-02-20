@@ -43,41 +43,47 @@ class LTCAdapter(ControllerInterface):
         self.trajectory_publisher = None
         self.controller_mode = LTC_MODE
         self.last_controller_mode = None
+        # from main() in guidance_publisher.py
+        self.aircraft_max_roll_deg: float = 40.0
+        self.camera_range_m: float = 100.0
+        self.num_loiters: int = 2
+        self.radius_to_close: float = 15.0
+        self.loiter_radius: float = DroneMath.realtime_loiter_radius(
+            mount_angle_phi_deg=self.aircraft_max_roll_deg,
+            cam_range_m=self.camera_range_m,
+            roll_limit_deg=self.aircraft_max_roll_deg)
+        self.current_target_index: int = 0
 
 
-    def get_commands(self, current_state: List[float], target_state: List[float], radius_to_close: float, num_loiters: int, loiter_radius: float) -> CtlTraj:
+    def get_commands(self, current_state: List[float], target_state: List[float]) -> CtlTraj:
         """
         Calculate control commands to navigate from current state to target state.
         
         Args:
             current_state: [x, y, z, roll, pitch, yaw, airspeed] - where drone currently IS
             target_state: [x, y, z] - desired waypoint the drone WANTS TO REACH
-            radius_to_close: distance threshold to switch to LTC
-            num_loiters: number of loiter circles to complete
-            loiter_radius: radius for LTC loiter
             
         Returns:
             Control commands (CtlTraj)
         """
-        x_distance = target_state[0] - current_state[0]
-        y_distance = target_state[1] - current_state[1]
-        total_distance = np.sqrt(x_distance**2 + y_distance**2)
-
-        if total_distance < radius_to_close:
-            # close to target — execute LTC (loiter)
-            aircraft_speed = self.current_state[6]
-            loiter_time_sec = DroneMath.calculate_loiter_time(num_loiters=num_loiters,
-                                                            loiter_radius=loiter_radius,
+        if self.is_close(radius_to_close=self.radius_to_close, 
+                     target_idx=self.current_target_index, 
+                     loiter_radius=self.loiter_radius):
+            # if close - LTC (loiter)
+            aircraft_speed = current_state[6]
+            loiter_time_sec = DroneMath.calculate_loiter_time(num_loiters=self.num_loiters,
+                                                            loiter_radius=self.loiter_radius,
                                                             aircraft_velocity_mps=aircraft_speed)
             delta_time = 0
             current_time = time.time()
             while delta_time < loiter_time_sec:
                 delta_time = time.time() - current_time
+                # is controller_state_machine necessary? calc_los instead?
                 trajectory = self.controller_state_machine(target_index=self.current_target_index)
                 rclpy.spin_once(self, timeout_sec=0.05)
             return trajectory
         else:
-            # execute the bearing command
+            # if far - bearing command
             return self.calculate_line_of_sight(self.current_target_index)
         
         # Input is Current State (x, y, z, phi (roll), theta (pitch), psi (yaw)), airspeed & Target State (x, y, z)

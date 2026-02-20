@@ -55,8 +55,10 @@ install(PROGRAMS
   scripts/goal_vis.py
   scripts/target_estimator.py
   scripts/guidance_publisher.py
-  # scripts/client_member_function.py
-  # scripts/service_member_function.py
+  scripts/sayhi_client_bridge.py
+  scripts/sayhi_service_node.py
+  scripts/guidance_algorithm_bridge.py
+  scripts/guidance_algorithm_service.py
   DESTINATION lib/${PROJECT_NAME}
 )
 ament_package()

@@ -1,7 +1,16 @@
 from controller_interface import ControllerInterface
 from typing import List, Any, Dict
 import numpy as np
+from apmuas_ros.PID import PID, FirstOrderFilter
+from apmuas_ros.drone_math import DroneMath
+from drone_interfaces.msg import CtlTraj
+import time
+import rclpy
 import math
+
+# Controller Mode Enumerations
+LTC_MODE = 0  
+MPC_MODE = 1  
 
 class LTCAdapter(ControllerInterface):
     """
@@ -9,8 +18,6 @@ class LTCAdapter(ControllerInterface):
 
     """
     def __init__(self):
-     # Option 1: Just do it all here with out needing to construct a class
-     # FirstOrderFilter class in PID.py
         self.dz_filter : FirstOrderFilter = FirstOrderFilter(
             tau=0.5, dt=0.025, x0=0.0)
         self.yaw_filter : FirstOrderFilter = FirstOrderFilter(
@@ -29,21 +36,58 @@ class LTCAdapter(ControllerInterface):
             max_constraint=np.deg2rad(40),
             use_derivative=True,
             dt = 0.025)
+        
+        self.cartesian_waypoints: List[List[float]] = []
+        self.current_state: List[float] = [None, None, None, None, None, None, None]
+        self.trajectory_command_history: List[Dict] = []
+        self.trajectory_publisher = None
+        self.controller_mode = LTC_MODE
+        self.last_controller_mode = None
 
-    #TODO: Add missing dependencies for calculate_los like state tracking, controllers/filters, roll_cmd, pitch_cmd, yaw_cmd, trajectory.publisher, etc.
 
-    def get_commands(self, current_state: List[float], target_state: List[float]) -> Any:
+    def get_commands(self, current_state: List[float], target_state: List[float], radius_to_close: float, num_loiters: int, loiter_radius: float) -> CtlTraj:
         """
         Calculate control commands to navigate from current state to target state.
         
         Args:
             current_state: [x, y, z, roll, pitch, yaw, airspeed] - where drone currently IS
             target_state: [x, y, z] - desired waypoint the drone WANTS TO REACH
+            radius_to_close: distance threshold to switch to LTC
+            num_loiters: number of loiter circles to complete
+            loiter_radius: radius for LTC loiter
             
         Returns:
             Control commands (CtlTraj)
         """
-        pass
+        x_distance = target_state[0] - current_state[0]
+        y_distance = target_state[1] - current_state[1]
+        total_distance = np.sqrt(x_distance**2 + y_distance**2)
+
+        if total_distance < radius_to_close:
+            # close to target — execute LTC (loiter)
+            aircraft_speed = self.current_state[6]
+            loiter_time_sec = DroneMath.calculate_loiter_time(num_loiters=num_loiters,
+                                                            loiter_radius=loiter_radius,
+                                                            aircraft_velocity_mps=aircraft_speed)
+            delta_time = 0
+            current_time = time.time()
+            while delta_time < loiter_time_sec:
+                delta_time = time.time() - current_time
+                trajectory = self.controller_state_machine(target_index=self.current_target_index)
+                rclpy.spin_once(self, timeout_sec=0.05)
+            return trajectory
+        else:
+            # execute the bearing command
+            return self.calculate_line_of_sight(self.current_target_index)
+        
+        # Input is Current State (x, y, z, phi (roll), theta (pitch), psi (yaw)), airspeed & Target State (x, y, z)
+        # Psuedocode:
+        # 1. Calculate distance: Using a^2 + b^2 = c^2 -> ((target x - current x)^2 + (target y - current y)^2) = c^2 -> then sqrt
+        # 2. Check if close
+        # 3. If close, Execute LTC (Level Turn Control), else execute bearing command.
+
+
+
 
     def calculate_line_of_sight(self, target_index:int) -> CtlTraj:
         """
@@ -53,18 +97,6 @@ class LTCAdapter(ControllerInterface):
         if self.current_state[0] is None:
             return
         
-
-        #TODO: Index into target_waypoints properly with target_index parameter -> Done
-        # stores target position in ENU in target class list
-        # self.target_waypoints[target_index][0] = target_msg.pose.pose.position.x
-        # self.target_waypoints[target_index][1] = target_msg.pose.pose.position.y
-        # self.target_waypoints[target_index][2] = target_msg.pose.pose.position.z
-        
-        # calculate distance from current position to target position 
-        # dx, dy = lateral distance
-        # dz = vertical distance
-        # offset_x: float = np.sin(self.current_state[5]) * loiter_radius
-        # offset_y: float = np.cos(self.current_state[5]) * loiter_radius
         dx:float = self.cartesian_waypoints[target_index][0] - self.current_state[0]
         dy:float = self.cartesian_waypoints[target_index][1] - self.current_state[1]
         dz:float = self.cartesian_waypoints[target_index][2] - self.current_state[2]
@@ -182,108 +214,67 @@ class LTCAdapter(ControllerInterface):
         """
         return (angle + np.pi) % (2 * np.pi) - np.pi
     
-    # Need 
-    # FirstOrderFilter (PID.py, class), -> DONE
-    # PID (PID.py, class), -> DONE
-    # CtlTraj (_ctl_traj.py, class) -> ?
-
-    class FirstOrderFilter:
-        """
-        First-order filter class for smoothing a setpoint signal.
-        https://en.wikipedia.org/wiki/Low-pass_filter
-        Args:
-            tau (float): Time constant of the filter.
-            dt (float): Time step for the filter.
-            x0 (float): Initial value of the filter.
-        Methods:
-            filter(x: float) -> float:
-                Applies the first-order filter to the input signal.
-        """
-        def __init__(self, tau:float, dt:float, 
-                    x0:float) -> None:
-            self.tau:float = tau
-            self.dt:float = dt
-            self.x0:float = x0
-            self.alpha:float = dt / (tau + dt)
-            
-        def filter(self, x:float) -> float:
-            """
-            Applies the first-order filter to the input signal.
-            Args:
-                x (float): Input signal to be filtered.
-            Returns:
-                float: Filtered output signal.
-            """
-            self.x0 = (1 - self.alpha) * self.x0 + self.alpha * x
-            return self.x0
-
-class PID:
-    """
-    PID controller class for controlling a system with a setpoint and current value.
-    Args:
-        min_constraint (float): Minimum constraint for the output.
-        max_constraint (float): Maximum constraint for the output.
-        use_integral (bool): Flag to use integral term in PID control.
-        use_derivative (bool): Flag to use derivative term in PID control.
-        kp (float): Proportional gain.
-        ki (float): Integral gain.
-        kd (float): Derivative gain.
-        dt (float): Time step for the controller.
     
-    Methods:
-        compute(setpoint: float, current_value: float, dt: float) -> float:
-            Computes the PID control output based on the setpoint and current value.
-            
-    """
-    def __init__(self,
-        min_constraint:float,
-        max_constraint:float,
-        use_integral:bool = False,
-        use_derivative:bool = False,
-        kp:float=0.05,
-        ki:float=0.0,
-        kd:float=0.0,
-        dt:float=0.05) -> None:
-
-        self.min_constraint:float = min_constraint
-        self.max_constraint:float = max_constraint
-        self.dt:float = dt
-                
-        self.use_integral:bool = use_integral
-        self.use_derivative:bool = use_derivative
-        
-        self.kp:float = kp
-        self.ki:float = ki
-        self.kd:float = kd
-        self.prev_error: float = None
-        self.integral: float = 0.0
-        
-    def compute(self,
-        setpoint:float,
-        current_value:float,
-        dt:float) -> float:
-        
-        error:float = setpoint - current_value
-        derivative:float = (error - self.prev_error) / dt
-        self.integral += error * dt
-        
-        if self.use_integral and self.use_derivative:
-            output = (self.kp * error) + \
-                (self.ki * self.integral) + (self.kd * derivative)
-        elif self.use_integral:
-            output:float = (self.kp * error) + \
-                (self.ki * self.integral)
-        elif self.use_derivative:
-            output:float = (self.kp * error) + (self.kd * derivative)
-        else:
-            output:float = (self.kp * error)
-        
-        self.prev_error = error
-        
-        return output
-
     # State Management 
     
+    def controller_state_machine(self, target_index: int) -> None:
+        """
+        Executes the appropriate controller logic based on the current control mode.
+         
+        Args:
+            target_index (int): Index of the current target waypoint.
+
+        Returns:
+            None     
+        """
+        if self.controller_mode == LTC_MODE:
+            if self.last_controller_mode != LTC_MODE:
+                print("Using LTC controller")
+            self.calculate_line_of_sight(target_index)
+
+        elif self.controller_mode == MPC_MODE:
+            if self.last_controller_mode != MPC_MODE:
+                print("Using MPC controller")
+            # Add MPC logic here
+            
+        else:
+            print(f"Unknown controller_mode: {self.controller_mode}, defaulting to LTC.")
+            self.calculate_line_of_sight(target_index)
+
+
+        # Update the previous controller mode for tracking
+        self.last_controller_mode = self.controller_mode
+
+
+
+    #TODO: define this function by calculating current to target location -> Done
+    #TODO: factor in the buffer here
+    def is_close(self, radius_to_close: float, target_idx:int, loiter_radius:float) -> bool:
+        #have two checks here, one to make sure that the altitude is acceptable enough for the camera range 
+        # The other this to make sure that the loiter radius is met 
+        radius_xy_good: bool = False
+        altitude_z_good: bool = False
+        #TODO: Checks here
+        # offset_x: float = np.sin(self.current_state[5]) * loiter_radius
+        # offset_y: float = np.cos(self.current_state[5]) * loiter_radius
+        x:float = ((self.cartesian_waypoints[target_idx][0] - self.current_state[0]) + 0) **2
+        y: float = ((self.cartesian_waypoints[target_idx][1] - self.current_state[1]) + 0)**2
+        distance_from_target: float =  math.sqrt(x + y)
+        if distance_from_target <= radius_to_close:
+            radius_xy_good = True
+        if abs(self.cartesian_waypoints[target_idx][2] - self.current_state[2]) <= 5: 
+            altitude_z_good = True
+
+        if radius_xy_good and altitude_z_good:
+            return True
+        return False
+
+    
+    # Need imports
+    # FirstOrderFilter (PID.py, class), -> DONE
+    # PID (PID.py, class), -> DONE
+    # CtlTraj (_ctl_traj.py, class) -> DONE
+
     # New Functions
     def check_if_loiter_done() -> Any:
         pass
